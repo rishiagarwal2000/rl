@@ -93,7 +93,8 @@ class PPOBuffer:
 def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=4000, epochs=50, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
         vf_lr=1e-3, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
-        target_kl=0.01, logger_kwargs=dict(), save_freq=10, device='cuda', cmd_args=None):
+        target_kl=0.01, logger_kwargs=dict(), save_freq=10, device='cuda', 
+        ref_env_fn=None, cmd_args=None):
     """
     Proximal Policy Optimization (by clipping), 
     with early stopping based on approximate KL
@@ -186,6 +187,7 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Instantiate environment
     env = env_fn()
+    ref_env = ref_env_fn()
     obs_dim = env.observation_space.shape
     act_dim = env.action_space.shape
     print(f"obs_dim: {obs_dim}, act_dim: {act_dim}")
@@ -291,7 +293,8 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     o, info = o
     # Main loop: collect experience in env and update/log each epoch
     rewards = []
-    best_reward = 0
+    ep_dist = {}
+    best_reward = -np.inf
     universal_timestep = 0
     wandb.define_metric("reward/step")
     wandb.define_metric("reward/*", step_metric="reward/step")
@@ -308,10 +311,12 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 print(traceback.format_exc())
                 print(f"o: {o}")
                 exit(1)
-            next_o, r, d, _, _ = env.step(a.cpu().numpy())
+            next_o, r, d, _, info = env.step(a.cpu().numpy())
             total_env_interacts += 1
             ep_ret += r
             ep_len += 1
+            for k, v in info['imitation_dist'].items():
+                ep_dist[k] = ep_dist.get(k,0) + v
             # save and log
             buf.store(torch.as_tensor(o, device=device), torch.as_tensor(a, device=device), torch.as_tensor(r, device=device), torch.as_tensor(v, device=device), torch.as_tensor(logp, device=device))
             # logger.store(VVals=v)
@@ -337,13 +342,16 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                     # only save EpRet / EpLen if trajectory finished
                     # logger.store(EpRet=ep_ret, EpLen=ep_len)
                 rewards.append(ep_ret / ep_len)
-                wandb.log({"reward/avg reward vs number of episodes": ep_ret / ep_len, "reward/total reward vs number of episodes": ep_ret, "reward/episode length vs number of episodes": ep_len, "reward/step": total_env_interacts})
+                wandb.log({**{f"reward/dist-{k}": v for k,v in ep_dist.items()}, **{"reward/avg reward vs number of episodes": ep_ret / ep_len, "reward/total reward vs number of episodes": ep_ret, "reward/episode length vs number of episodes": ep_len, "reward/step": total_env_interacts}})
                 if ep_ret > best_reward:
                     best_reward = ep_ret
                     gif_path = f'gifs/run-{cmd_args.run}-interacts-{total_env_interacts}.gif'
                     save_gif(ac, env, gif_path)
+                    ref_gif_path = f'gifs/exp-{cmd_args.exp_name}-run-{cmd_args.run}-interacts-{total_env_interacts}-ref.gif'
+                    save_gif(ac, ref_env, ref_gif_path)
                     # imageio.mimsave(f'gifs/run-4-interacts-{total_env_interacts}.gif', frames)
                     wandb.log({"reward/video": wandb.Video(gif_path)})
+                    wandb.log({"reward/ref-video": wandb.Video(ref_gif_path)})
                     print(f'saving new best reward model with reward={best_reward}')
                     torch.save({'ac': ac.state_dict(), 'ac_kwargs': ac_kwargs}, f'models/run-{cmd_args.run}-best-reward.pt')
                     
@@ -360,7 +368,7 @@ def ppo(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                     # print(f'Best model performance: avg reward={avg_reward}')
                 # wandb.log({"total reward vs number of episodes": ep_ret}, step=len(rewards))
                 # wandb.log({"episode length vs number of episodes": ep_len}, step=len(rewards))
-                o, ep_ret, ep_len = env.reset(), 0, 0
+                o, ep_ret, ep_len, ep_dist = env.reset(), 0, 0, {}
                 o, info = o
             # print(f'epoch={epoch}, step={t}, time={time.time()-start}')
         print(f'epoch={epoch}, time={time.time()-epoch_start}')
@@ -412,10 +420,10 @@ def simulate(ac, env):
     while True:
         step += 1
         a, v, logp = ac.step(torch.as_tensor(o, dtype=torch.float32))
-        observation, reward, terminated, truncated, info = env.step(a.cpu().numpy())
+        o, reward, terminated, truncated, info = env.step(a.cpu().numpy())
         r += reward
         if terminated or truncated:
-            observation, info = env.reset()
+            o, info = env.reset()
             ep += 1
             rewards.append(r)
             # print(f'episode={ep}, length={step}, total reward={r}')
@@ -442,7 +450,7 @@ if __name__ == '__main__':
     parser.add_argument('--run', type=int, default=0)
     args = parser.parse_args()
     args.device = torch.device(args.device)
-    torch.cuda.set_device(0)
+    # torch.cuda.set_device(0)
 
     from gymnasium.envs.registration import register
     import imageio
@@ -458,9 +466,10 @@ if __name__ == '__main__':
     # from spinup.utils.run_utils import setup_logger_kwargs
     # logger_kwargs = setup_logger_kwargs(args.exp_name, args.seed)
     wandb.init(project="rl-2d-walker", name=args.exp_name, reinit=False)
-    ppo(lambda : gym.make(args.env, render_mode="rgb_array"), actor_critic=core.MLPActorCritic,
+    ppo(lambda : gym.make(args.env, ref=False, render_mode="rgb_array"), actor_critic=core.MLPActorCritic,
         ac_kwargs=dict(hidden_sizes=[args.hid]*args.l), gamma=args.gamma, 
-        seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs, device=args.device, cmd_args=args)
+        seed=args.seed, steps_per_epoch=args.steps, epochs=args.epochs, device=args.device, 
+        ref_env_fn=lambda : gym.make(args.env, ref=True, render_mode="rgb_array"), cmd_args=args)
     # state = torch.load(f'models/run-{args.run}-best-reward.pt')
     # env = gym.make(args.env, render_mode="rgb_array")
     # ac_load = core.MLPActorCritic(env.observation_space, env.action_space, **state['ac_kwargs'])
@@ -468,4 +477,4 @@ if __name__ == '__main__':
     # save_gif(ac_load, env, '2d-walker-new.gif')
 
 # deepmimic run
-# python ppo.py --exp_name mimic-1 --env Walker2dMimic-v4
+# python ppo.py --exp_name mimic-1 --env WalkerMimic-v4
