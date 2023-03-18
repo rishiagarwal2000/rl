@@ -13,6 +13,7 @@ import json
 class PPO():
     def __init__(self, env, args, ac_kwargs=dict(), device='cpu'):
         self.num_envs = args.num_envs
+        self.env_fn = env
         self.envs = [env() for _ in range(self.num_envs)]
         self.ac = core.MLPActorCritic(self.envs[0].observation_space, self.envs[0].action_space, args.log_policy_var, **ac_kwargs)
         self.show_time = True
@@ -38,13 +39,13 @@ class PPO():
         self.v_steps = 0
         self.pi_steps = 0
         self.exp_name = args.exp_name
+        self.args = args
 
     def _collect_trajectories_sequential(self, env_id):
         # collect trajectories using self.envs[env_id]
         seed = self.seed + 10000 * env_id
         torch.manual_seed(seed)
         np.random.seed(seed)
-
         env = self.envs[env_id]
         trajs = []
         obs_buf = []
@@ -147,7 +148,8 @@ class PPO():
         
         with Pool(self.num_envs) as p:
             trajs = p.map(self._collect_trajectories_sequential, [i for i in range(self.num_envs)])
-        
+        # trajs = [self._collect_trajectories_sequential(i) for i in range(self.num_envs)]
+
         self.combine_trajs(trajs)
 
         end_time = time.time()
@@ -276,14 +278,15 @@ class Dict2Class(object):
 if __name__ == '__main__':
     from gymnasium.envs.registration import register
 
-    register(
-        id='WalkerMimic-v4',
-        entry_point='walker_mimic_env:Walker2dEnv',
-        max_episode_steps=500,
-    )
 
     args_dict = json.load(open("config/walker_mimic.json", "r"))
     args = Dict2Class(args_dict)
+
+    register(
+        id='WalkerMimic-v4',
+        entry_point='walker_mimic_env:Walker2dEnv',
+        max_episode_steps=500
+    )
 
     wandb.init(project=args.project_name, name=args.exp_name, reinit=False, config=args_dict)
 
@@ -294,5 +297,7 @@ if __name__ == '__main__':
     wandb.define_metric("reward/episodes")
     wandb.define_metric("reward/*", step_metric="reward/episodes")
     
-    ppo = PPO(lambda : gym.make(args.env_name, args=args, render_mode="rgb_array"), args, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))
+    def env_fn():
+        return gym.make(args.env_name, render_mode="rgb_array")
+    ppo = PPO(env_fn, args, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))
     ppo.train()
