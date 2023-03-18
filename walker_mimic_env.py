@@ -137,6 +137,15 @@ class Walker2dEnv(MuJocoPyEnv, utils.EzPickle):
         self.viewer.cam.lookat[2] = 1.15
         self.viewer.cam.elevation = -20
 
+import gymnasium as gym
+from gymnasium.envs.registration import register
+
+register(
+    id='WalkerMimic-v4',
+    entry_point='walker_mimic_env:Walker2dEnv',
+    max_episode_steps=500,
+)
+
 if __name__ == '__main__':
     import gymnasium as gym
     from gymnasium.envs.registration import register
