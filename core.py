@@ -40,7 +40,7 @@ def discount_cumsum(x, discount):
          x2]
     """
     # print(f"discount={discount}, x={x}")
-    return scipy.signal.lfilter([1], [1, float(-discount)], x.cpu().numpy()[::-1], axis=0)[::-1]
+    return scipy.signal.lfilter([1], [1, float(-discount)], x[::-1], axis=0)[::-1]
 
 
 class Actor(nn.Module):
@@ -78,9 +78,9 @@ class MLPCategoricalActor(Actor):
 
 class MLPGaussianActor(Actor):
 
-    def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
+    def __init__(self, obs_dim, act_dim, hidden_sizes, activation, log_policy_var):
         super().__init__()
-        log_std = -2 * np.ones(act_dim, dtype=np.float32)
+        log_std = log_policy_var * np.ones(act_dim, dtype=np.float32)
         self.log_std = torch.nn.Parameter(torch.as_tensor(log_std))
         self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
 
@@ -107,7 +107,7 @@ class MLPCritic(nn.Module):
 class MLPActorCritic(nn.Module):
 
 
-    def __init__(self, observation_space, action_space, 
+    def __init__(self, observation_space, action_space, log_policy_var,
                  hidden_sizes=(64,64), activation=nn.Tanh):
         super().__init__()
 
@@ -115,7 +115,7 @@ class MLPActorCritic(nn.Module):
 
         # policy builder depends on action space
         if isinstance(action_space, Box):
-            self.pi = MLPGaussianActor(obs_dim, action_space.shape[0], hidden_sizes, activation)
+            self.pi = MLPGaussianActor(obs_dim, action_space.shape[0], hidden_sizes, activation, log_policy_var)
         elif isinstance(action_space, Discrete):
             self.pi = MLPCategoricalActor(obs_dim, action_space.n, hidden_sizes, activation)
 
@@ -128,7 +128,7 @@ class MLPActorCritic(nn.Module):
             a = pi.sample()
             logp_a = self.pi._log_prob_from_distribution(pi, a)
             v = self.v(obs)
-        return a, v, logp_a
+        return a.numpy(), v.numpy(), logp_a.numpy()
 
     def act(self, obs):
         return self.step(obs)[0]
