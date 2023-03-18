@@ -8,7 +8,6 @@ import numpy as np
 import imageio
 import wandb
 import os
-import walker_mimic_env
 import json
 
 class PPO():
@@ -275,7 +274,15 @@ class Dict2Class(object):
             setattr(self, key, my_dict[key])
 
 if __name__ == '__main__':
-    args_dict = json.load("config/walker_mimic.json")
+    from gymnasium.envs.registration import register
+
+    register(
+        id='WalkerMimic-v4',
+        entry_point='walker_mimic_env:Walker2dEnv',
+        max_episode_steps=500,
+    )
+
+    args_dict = json.load(open("config/walker_mimic.json", "r"))
     args = Dict2Class(args_dict)
 
     wandb.init(project=args.project_name, name=args.exp_name, reinit=False, config=args_dict)
@@ -286,5 +293,6 @@ if __name__ == '__main__':
     wandb.define_metric("v/*", step_metric="v/step")
     wandb.define_metric("reward/episodes")
     wandb.define_metric("reward/*", step_metric="reward/episodes")
-    ppo = PPO(lambda : gym.make(env_name, render_mode="rgb_array"), args, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))
+    
+    ppo = PPO(lambda : gym.make(args.env_name, args=args, render_mode="rgb_array"), args, ac_kwargs=dict(hidden_sizes=[args.hid]*args.l))
     ppo.train()

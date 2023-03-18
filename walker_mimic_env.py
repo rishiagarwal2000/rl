@@ -17,7 +17,7 @@ class Walker2dEnv(MuJocoPyEnv, utils.EzPickle):
     }
     dt = 0.005
     ep_dt = 0.005
-    def __init__(self, ref=False, **kwargs):
+    def __init__(self, ref=False, args=None, **kwargs):
         observation_space = Box(low=-np.inf, high=np.inf, shape=(17,), dtype=np.float64)
         MuJocoPyEnv.__init__(
             self, "/home/rishia/projects/rl/xml/walker2d_low_freq.xml", 4, observation_space=observation_space, **kwargs
@@ -28,18 +28,13 @@ class Walker2dEnv(MuJocoPyEnv, utils.EzPickle):
         self.idx_motion = 0
         self.x_diff = 0.1
         self.num_steps = 0
-        self.kp = 1.2 #1.2 # 0.04, 0.08, 0.8
-        self.kd = 0.1 #33 / 1000 # 0.005, 0.01, 0.02
+        self.kp = args.kp if args else 1.2 #1.2 # 0.04, 0.08, 0.8
+        self.kd = args.kd if args else 0.1 #33 / 1000 # 0.005, 0.01, 0.02
         self.ref = ref
         self.cycle_time = 1
         self.ref_dt = self.cycle_time / (self.motion.shape[0] - 1)
         self.interpolated_ref_motion = scipy.interpolate.interp1d(np.linspace(0, 1, num=self.motion.shape[0]), self.motion, axis=0)
         self.FLY = False
-        # print(f"frameskip={self.frame_skip}")
-        # exit(1)
-        # print([self.interpolated_ref_motion(x) for x in np.linspace(0, 1, num=self.motion.shape[0])])
-        # exit(1)
-        # print(f'dt={self.ep_dt}')
     
     def _increment(self, index):
         assert index < self.motion.shape[0]
@@ -192,14 +187,6 @@ class Walker2dEnv(MuJocoPyEnv, utils.EzPickle):
         self.viewer.cam.lookat[2] = 1.15
         self.viewer.cam.elevation = -20
 
-import gymnasium as gym
-from gymnasium.envs.registration import register
-
-register(
-    id='WalkerMimic-v4',
-    entry_point='walker_mimic_env:Walker2dEnv',
-    max_episode_steps=500,
-)
 
 if __name__ == '__main__':
     import gymnasium as gym

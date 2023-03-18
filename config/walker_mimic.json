@@ -15,7 +15,9 @@
     "target_kl": 0.01,
     "log_policy_var": -1.0,
     "kl_multiplier": 1.5,
-    "exp_name": "run-1",
-    "env_name": "'WalkerMimic-v4",
-    "project_name": "rl-2d-walker-mimic"
+    "exp_name": "run-2",
+    "env_name": "WalkerMimic-v4",
+    "project_name": "rl-2d-walker-mimic",
+    "kp": 1,
+    "kd": 0.1
 }
