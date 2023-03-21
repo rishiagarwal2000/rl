@@ -35,7 +35,7 @@ class PPO():
 
         self.total_episodes = args.total_episodes
         self.episodes = 0
-
+        self.log_episodes = args.log_episodes
         self.v_steps = 0
         self.pi_steps = 0
         self.exp_name = args.exp_name
@@ -118,7 +118,7 @@ class PPO():
         buf['rews_total'] = np.array([np.sum(rews_buf_ep) for rews_buf_ep in rews_buf])
         buf['ep_len'] = np.array([len(rews_buf_ep) for rews_buf_ep in rews_buf])
         buf['rews_mean'] = np.array([np.mean(rews_buf_ep) for rews_buf_ep in rews_buf])
-
+        env.close()
         # for k,v in buf.items():
         #     print(f"{k}.shape={v.shape}")
         return buf
@@ -217,11 +217,24 @@ class PPO():
 
     def log_step(self):
         # collect trajectories
-        self.collect_trajectories()
+        self.print_time("starting logging now")
+        start_time = time.time()
+
         loss_pi, _ = self.compute_loss_pi()
         loss_v = self.compute_loss_v()
         self.loss_pi, self.loss_v = loss_pi.item(), loss_v.item()
-    
+        gif_path = self.save_gif()
+        wandb.log({"reward/avg reward vs number of episodes": torch.mean(self.rollout_buffer['rews_mean']).cpu().numpy(),
+                "reward/total reward (averaged over multiple episodes) vs number of episodes": torch.mean(self.rollout_buffer['rews_total']).cpu().numpy(),
+                "reward/episode length (averaged over multiple episodes) vs number of episodes": torch.mean(self.rollout_buffer['ep_len']).cpu().numpy(),
+                "reward/episodes": self.episodes, "reward/video": wandb.Video(gif_path), "v/loss_v": self.loss_v, "v/step": self.v_steps,
+                "pi/loss": self.loss_pi, "pi/step": self.pi_steps, **{f"pi/log_std[{i}]": val.item() for i,val in enumerate(self.ac.pi.log_std)}
+                }
+            )
+        
+        end_time = time.time()
+        self.print_time(f"logging time = {end_time-start_time}s")
+
     def update_step(self):
         # update policy
         self.update_policy()
@@ -231,16 +244,10 @@ class PPO():
     def train(self):
         # run train_step num_train times
         while self.episodes < self.total_episodes:
-            gif_path = self.save_gif()
-            self.log_step()
-            
-            wandb.log({"reward/avg reward vs number of episodes": torch.mean(self.rollout_buffer['rews_mean']).cpu().numpy(),
-                "reward/total reward (averaged over multiple episodes) vs number of episodes": torch.mean(self.rollout_buffer['rews_total']).cpu().numpy(),
-                "reward/episode length (averaged over multiple episodes) vs number of episodes": torch.mean(self.rollout_buffer['ep_len']).cpu().numpy(),
-                "reward/episodes": self.episodes, "reward/video": wandb.Video(gif_path), "v/loss_v": self.loss_v, "v/step": self.v_steps, 
-                "pi/loss": self.loss_pi, "pi/step": self.pi_steps, **{f"pi/log_std[{i}]": val.item() for i,val in enumerate(self.ac.pi.log_std)}
-                }
-            )
+            self.collect_trajectories()
+
+            if self.episodes % self.log_episodes == 0:
+                self.log_step()
 
             self.update_step()
 
